@@ -585,19 +585,39 @@ class AutonomousAgent:
         try:
             current_input = state["messages"][-1]["content"] if state["messages"] else ""
 
-            # Retrieve relevant memories
+            # Check if this is a simple conversational query (greetings, simple questions)
+            conversational_patterns = [
+                'hello', 'hi', 'hey', 'greetings', 'how are you', 'what\'s up',
+                'good morning', 'good afternoon', 'good evening',
+                'thank you', 'thanks', 'bye', 'goodbye',
+                'who are you', 'what are you', 'what can you do'
+            ]
+
+            is_conversational = any(pattern in current_input.lower() for pattern in conversational_patterns)
+
+            if is_conversational:
+                # Skip complex thinking for simple conversation
+                state["current_task"] = "simple_conversation"
+                return state
+
+            # Retrieve relevant memories for complex queries
             memories = self.memory.retrieve_relevant_memory(current_input, k=3)
             state["memory_context"] = memories
 
-            # Decide what to do
+            # Decide what tools to use
             tool_names = [tool.name for tool in self.tools.tools]
-            thought_prompt = f"""Task: {current_input}
+            thought_prompt = f"""Analyze this user request and determine if any tools are needed: "{current_input}"
 
 Available tools: {', '.join(tool_names)}
 
-Relevant memories: {memories[:2] if memories else 'None'}
+If the question needs:
+- Current information or web search → use web_search
+- Wikipedia knowledge → use wikipedia
+- File reading → use file_read
+- Past conversation context → use memory_search
+- Just a conversational response → say "no tools needed"
 
-What's the best way to handle this task? Think step by step."""
+What tools should be used? (Keep it brief, just list tool names or "no tools needed")"""
 
             thought = self.llm.invoke(thought_prompt)
             state["current_task"] = str(thought)
@@ -644,18 +664,40 @@ What's the best way to handle this task? Think step by step."""
             tool_results = state.get("tool_results", [])
             task = state.get("current_task", "")
 
-            # Generate response
-            if tool_results:
-                response_prompt = f"""User question: {user_input}
+            # Handle simple conversations directly
+            if task == "simple_conversation":
+                # Use a conversational system prompt for natural responses
+                response_prompt = f"""You are a friendly and helpful AI assistant. Respond naturally to this message: "{user_input}"
 
-Tool results:
+Keep your response:
+- Natural and conversational (not formal or academic)
+- Brief (1-2 sentences for greetings, 2-3 for questions)
+- Helpful and friendly
+- Focused on how you can assist the user
+
+Examples of good responses:
+User: "Hello, how are you?"
+Response: "Hello! I'm doing well, thank you for asking. How can I assist you today?"
+
+User: "What can you do?"
+Response: "I'm an AI assistant that can help you with information lookup, answer questions, search the web, and more. What would you like help with?"
+
+Now respond to: "{user_input}" """
+
+            # Generate response with context from tools
+            elif tool_results:
+                response_prompt = f"""The user asked: "{user_input}"
+
+Information from tools:
 {chr(10).join(tool_results)}
 
-Based on the tool results, provide a helpful and concise response."""
-            else:
-                response_prompt = f"""User question: {user_input}
+Based on this information, provide a clear, helpful, and natural response. Be conversational but informative. Don't mention the tools or how you got the information - just answer the question naturally."""
 
-Provide a helpful and concise response."""
+            # Direct response for simple questions
+            else:
+                response_prompt = f"""The user asked: "{user_input}"
+
+Provide a clear, helpful, and conversational response. Be friendly and natural, not overly formal or academic. Keep it concise but informative."""
 
             response = self.llm.invoke(response_prompt)
 
