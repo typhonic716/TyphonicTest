@@ -1,6 +1,7 @@
 """
 Launch script for AI Agent System
 Provides multiple interface options: CLI, Web UI, or both
+Now with easy model selection!
 """
 
 import os
@@ -24,7 +25,7 @@ def setup_logging(log_level: str = "INFO"):
         ]
     )
 
-def check_requirements():
+def check_requirements(skip_model_check: bool = False):
     """Check if essential requirements are met"""
     issues = []
 
@@ -32,10 +33,10 @@ def check_requirements():
     from config import get_config
     config = get_config()
 
-    # Check if model exists
-    if not config.validate_model_exists():
+    # Check if model exists (can be skipped if we'll select one)
+    if not skip_model_check and not config.validate_model_exists():
         issues.append(f"Model file not found: {config.get('model', 'path')}")
-        issues.append("Please download a model or update config.json")
+        issues.append("Use --model to specify a model or --list-models to see available models")
 
     # Check essential packages
     try:
@@ -47,7 +48,7 @@ def check_requirements():
 
     return issues
 
-def launch_cli(config_path: Optional[str] = None):
+def launch_cli(config_path: Optional[str] = None, model_path: Optional[str] = None):
     """Launch CLI interface"""
     print("=" * 60)
     print("🤖 AI Agent System - CLI Mode")
@@ -57,7 +58,7 @@ def launch_cli(config_path: Optional[str] = None):
         from agent import AutonomousAgent
 
         print("📦 Initializing agent...")
-        agent = AutonomousAgent(config_path)
+        agent = AutonomousAgent(config_path, model_path)
         print("✅ Agent ready!")
 
         print("\nCommands:")
@@ -111,7 +112,7 @@ def launch_cli(config_path: Optional[str] = None):
         logging.error("CLI error", exc_info=True)
         sys.exit(1)
 
-def launch_web(config_path: Optional[str] = None, share: bool = False):
+def launch_web(config_path: Optional[str] = None, model_path: Optional[str] = None, share: bool = False):
     """Launch web interface"""
     print("=" * 60)
     print("🌐 AI Agent System - Web Mode")
@@ -131,7 +132,7 @@ def launch_web(config_path: Optional[str] = None, share: bool = False):
         config = get_config(config_path)
 
         print("📦 Initializing agent...")
-        agent = AutonomousAgent(config_path)
+        agent = AutonomousAgent(config_path, model_path)
         print("✅ Agent ready!")
 
         print("🌐 Starting web interface...")
@@ -371,10 +372,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python launch.py              # Launch CLI interface
-  python launch.py --web        # Launch web interface
-  python launch.py --web --share  # Launch web with public link
-  python launch.py --config ~/custom_config.json  # Use custom config
+  python launch.py                                    # Interactive model selection + CLI
+  python launch.py --web                              # Interactive model selection + Web
+  python launch.py --model path/to/model.gguf         # Use specific model
+  python launch.py --model llama                      # Use model matching 'llama'
+  python launch.py --list-models                      # Show available models
+  python launch.py --model-info                       # Show model download guide
+  python launch.py --web --share                      # Web with public link
+  python launch.py --config ~/custom_config.json      # Use custom config
         """
     )
 
@@ -388,6 +393,24 @@ Examples:
         '--share',
         action='store_true',
         help='Create public share link for web interface'
+    )
+
+    parser.add_argument(
+        '--model',
+        type=str,
+        help='Path to model file or model name to search for'
+    )
+
+    parser.add_argument(
+        '--list-models',
+        action='store_true',
+        help='List all available models and exit'
+    )
+
+    parser.add_argument(
+        '--model-info',
+        action='store_true',
+        help='Show model download information and exit'
     )
 
     parser.add_argument(
@@ -415,20 +438,51 @@ Examples:
     # Setup logging
     setup_logging(args.log_level)
 
-    # Check requirements
-    issues = check_requirements()
+    # Handle model-related commands
+    from model_selector import ModelSelector, select_model_for_launch
+
+    if args.list_models:
+        selector = ModelSelector()
+        selector.list_models(verbose=True)
+        sys.exit(0)
+
+    if args.model_info:
+        selector = ModelSelector()
+        selector.prompt_for_model_download()
+        sys.exit(0)
+
+    # Select model
+    model_path = None
+    if args.model or not args.check:
+        print("\n🔍 Selecting model...")
+        model_path = select_model_for_launch(
+            model_arg=args.model,
+            config_path=args.config,
+            interactive=not args.check
+        )
+
+        if not model_path and not args.check:
+            print("\n❌ No model selected. Exiting.")
+            print("\n💡 Try:")
+            print("   python launch.py --list-models     # See available models")
+            print("   python launch.py --model-info      # Get download info")
+            sys.exit(1)
+
+    # Check requirements (skip model check since we selected one)
+    issues = check_requirements(skip_model_check=bool(model_path))
     if issues:
-        print("⚠️  Issues detected:")
+        print("\n⚠️  Issues detected:")
         for issue in issues:
             print(f"  - {issue}")
 
         if args.check:
             sys.exit(1)
 
-        response = input("\nContinue anyway? (y/N): ")
-        if response.lower() != 'y':
-            print("Aborting.")
-            sys.exit(1)
+        if not model_path:  # Only ask if we don't have a model
+            response = input("\nContinue anyway? (y/N): ")
+            if response.lower() != 'y':
+                print("Aborting.")
+                sys.exit(1)
         print()
 
     if args.check:
@@ -438,9 +492,9 @@ Examples:
     # Launch appropriate interface
     try:
         if args.web:
-            launch_web(args.config, args.share)
+            launch_web(args.config, model_path, args.share)
         else:
-            launch_cli(args.config)
+            launch_cli(args.config, model_path)
 
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")

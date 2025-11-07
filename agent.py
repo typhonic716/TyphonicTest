@@ -497,13 +497,14 @@ class MemorySystem:
 class AutonomousAgent:
     """Main autonomous agent with improved architecture"""
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, model_path: str = None):
         self.config = get_config(config_path)
         self.memory = MemorySystem(self.config)
         self.tools = ToolFramework(self.memory, self.config)
         self.conversation_history = []
         self.llm = None
         self.agent_graph = None
+        self.model_path = model_path  # Override config if provided
 
         # Initialize components
         self._initialize_llm()
@@ -513,15 +514,26 @@ class AutonomousAgent:
         """Initialize the local LLM with error handling"""
         logger.info("Initializing local LLM...")
 
-        # Check if model exists
-        if not self.config.validate_model_exists():
-            logger.error(f"Model file not found at: {self.config.get('model', 'path')}")
-            logger.info("Please download a model or update the config.json file")
-            raise FileNotFoundError("Model file not found")
+        # Determine which model path to use
+        if self.model_path:
+            # Use provided model path (overrides config)
+            model_path = str(self.model_path)
+            logger.info(f"Using specified model: {model_path}")
+        else:
+            # Use model from config
+            model_path = self.config.get('model', 'path')
+
+            # Check if model exists
+            if not self.config.validate_model_exists():
+                logger.error(f"Model file not found at: {model_path}")
+                logger.info("Please download a model or specify one with --model")
+                raise FileNotFoundError("Model file not found")
 
         try:
+            logger.info(f"Loading model: {Path(model_path).name}...")
+
             self.llm = LlamaCpp(
-                model_path=self.config.get('model', 'path'),
+                model_path=model_path,
                 n_gpu_layers=self.config.get('model', 'n_gpu_layers', default=0),
                 n_batch=self.config.get('model', 'n_batch', default=512),
                 n_ctx=self.config.get('model', 'n_ctx', default=8192),
